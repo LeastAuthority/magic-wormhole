@@ -202,9 +202,16 @@ class _ClientMachine(object):
         """
 
     @_machine.state()
+    def _connecting_first_time(self):
+        """
+        The service has started connecting for the first time.
+        """
+
+    @_machine.state()
     def _connecting(self):
         """
-        The service has started connecting.
+        The service has started connecting after a previous successful
+        connection.
         """
 
     @_machine.state()
@@ -235,13 +242,21 @@ class _ClientMachine(object):
     @_machine.state()
     def _stopped(self):
         """
-        The service has been stopped an is disconnected.
+        The service has been stopped and is disconnected.
         """
 
     @_machine.input()
     def start(self):
         """
         Start this L{ClientService}, initiating the connection retry loop.
+        """
+
+    @_machine.input()
+    def startAndFailTheFirstTime(self):
+        """
+        Start this L{ClientService}, initiating the connection retry loop. In
+        this mode, a failure on the very first connection attempt will stop
+        the service and signal the failure via whenConnected.
         """
 
     @_machine.output()
@@ -255,7 +270,7 @@ class _ClientMachine(object):
         self._connectionInProgress = (
             self._endpoint.connect(factoryProxy)
             .addCallback(self._connectionMade)
-            .addErrback(lambda _: self._connectionFailed()))
+            .addErrback(self._connectionFailed))
 
 
     @_machine.output()
@@ -340,10 +355,14 @@ class _ClientMachine(object):
 
 
     @_machine.input()
-    def _connectionFailed(self):
+    def _connectionFailed(self, f):
         """
         The current connection attempt failed.
         """
+
+    @_machine.output()
+    def _notifyInitialConnectionFailed(self, f):
+        self._unawait(f)
 
     @_machine.output()
     def _wait(self):
@@ -357,6 +376,9 @@ class _ClientMachine(object):
                        endpoint=self._endpoint, delay=delay)
         self._retryCall = self._clock.callLater(delay, self._reconnect)
 
+    @_machine.output()
+    def _wait1(self, f):
+        return self._wait()
 
     @_machine.input()
     def _reconnect(self):
@@ -385,6 +407,9 @@ class _ClientMachine(object):
         are expected.
         """
         self._unawait(Failure(CancelledError()))
+    @_machine.output()
+    def _cancelConnectWaiters1(self, f):
+        return self._cancelConnectWaiters()
 
 
     @_machine.output()
@@ -395,6 +420,9 @@ class _ClientMachine(object):
         self._stopWaiters, waiting = [], self._stopWaiters
         for w in waiting:
             w.callback(None)
+    @_machine.output()
+    def _finishStopping1(self, f):
+        return self._finishStopping()
 
 
     @_machine.input()
@@ -465,9 +493,30 @@ class _ClientMachine(object):
 
     _init.upon(start, enter=_connecting,
                outputs=[_connect])
+    _init.upon(startAndFailTheFirstTime, enter=_connecting_first_time,
+               outputs=[_connect])
     _init.upon(stop, enter=_stopped,
                outputs=[_deferredSucceededWithNone],
                collector=_firstResult)
+
+    _connecting_first_time.upon(start, enter=_connecting_first_time, outputs=[])
+    # Note that this synchonously triggers _connectionFailed in the
+    # _disconnecting state.
+    _connecting_first_time.upon(stop, enter=_disconnecting,
+                                outputs=[_waitForStop, _stopConnecting],
+                                collector=_firstResult)
+    _connecting_first_time.upon(_connectionMade, enter=_connected,
+                                outputs=[_notifyWaiters])
+    # this transition is the important difference -warner
+    _connecting_first_time.upon(_connectionFailed, enter=_stopped,
+                                outputs=[_notifyInitialConnectionFailed,
+                                         #_finishStopping,
+                                         ])
+    # _finishStopping(f) means any _waitForStop() Deferreds will get
+    # errbacked (when usually they get callbacked(None). But for there to be
+    # such a Deferred, we'd have to be in _connecting_first_time after
+    # someone called stop() (since that's the only edge that uses
+    # _waitForStop). So we don't need it.
 
     _connecting.upon(start, enter=_connecting, outputs=[])
     # Note that this synchonously triggers _connectionFailed in the
@@ -478,7 +527,7 @@ class _ClientMachine(object):
     _connecting.upon(_connectionMade, enter=_connected,
                      outputs=[_notifyWaiters])
     _connecting.upon(_connectionFailed, enter=_waiting,
-                     outputs=[_wait])
+                     outputs=[_wait1])
 
     _waiting.upon(start, enter=_waiting,
                   outputs=[])
@@ -511,7 +560,7 @@ class _ClientMachine(object):
     # Note that this is triggered synchonously with the transition from
     # _connecting
     _disconnecting.upon(_connectionFailed, enter=_stopped,
-                        outputs=[_cancelConnectWaiters, _finishStopping])
+                        outputs=[_cancelConnectWaiters1, _finishStopping1])
 
     _restarting.upon(start, enter=_restarting,
                      outputs=[])
@@ -527,9 +576,14 @@ class _ClientMachine(object):
                   outputs=[_deferredSucceededWithNone],
                   collector=_firstResult)
 
+    # whenConnected() does not trigger a state transition, but it returns a
+    # different kind of Deferred depending upon the state we're in
     _init.upon(whenConnected, enter=_init,
                outputs=[_awaitingConnection],
                collector=_firstResult)
+    _connecting_first_time.upon(whenConnected, enter=_connecting_first_time,
+                                outputs=[_awaitingConnection],
+                                collector=_firstResult)
     _connecting.upon(whenConnected, enter=_connecting,
                      outputs=[_awaitingConnection],
                      collector=_firstResult)
