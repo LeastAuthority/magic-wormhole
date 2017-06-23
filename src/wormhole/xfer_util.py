@@ -7,7 +7,7 @@ from .tor_manager import get_tor
 @inlineCallbacks
 def receive(reactor, appid, relay_url, code,
             use_tor=False, launch_tor=False, tor_control_port=None,
-            on_code=None):
+            on_code=None, timing=None):
     """
     This is a convenience API which returns a Deferred that callbacks
     with a single chunk of data from another wormhole (and then closes
@@ -34,7 +34,7 @@ def receive(reactor, appid, relay_url, code,
         # can lazy-provide an endpoint, and overlap the startup process
         # with the user handing off the wormhole code
 
-    wh = wormhole.create(appid, relay_url, reactor, tor=tor)
+    wh = wormhole.create(appid, relay_url, reactor, tor=tor, timing=timing)
     if code is None:
         wh.allocate_code()
         code = yield wh.get_code()
@@ -69,7 +69,7 @@ def receive(reactor, appid, relay_url, code,
 @inlineCallbacks
 def send(reactor, appid, relay_url, data, code,
          use_tor=False, launch_tor=False, tor_control_port=None,
-         on_code=None):
+         on_code=None, timing=None):
     """
     This is a convenience API which returns a Deferred that callbacks
     after a single chunk of data has been sent to another
@@ -95,7 +95,7 @@ def send(reactor, appid, relay_url, data, code,
         # tor in parallel with everything else, make sure the Tor object
         # can lazy-provide an endpoint, and overlap the startup process
         # with the user handing off the wormhole code
-    wh = wormhole.create(appid, relay_url, reactor, tor=tor)
+    wh = wormhole.create(appid, relay_url, reactor, tor=tor, timing=timing)
     if code is None:
         wh.allocate_code()
         code = yield wh.get_code()
