@@ -1,28 +1,51 @@
 from __future__ import print_function, unicode_literals
 import os, time
+import click
+from zope.interface import implementer
 from twisted.python import usage
+from twisted import plugin
 from twisted.scripts import twistd
+from twisted.application import service
 
+from .cli import LaunchArgs
+
+@implementer(service.IServiceMaker, plugin.IPlugin)
 class MyPlugin(object):
-    tapname = "xyznode"
+    tapname = "magic-wormhole-server"
 
-    def __init__(self, args):
+    description = "Securely transfer data between computers (server)"
+
+    class options(object):
+        def parseOptions(self, argv):
+            @click.command()
+            @LaunchArgs
+            def parse(**kwargs):
+                self.__dict__.update(kwargs)
+            parse.main(argv, standalone_mode=False)
+
+    def __init__(self, args=None):
         self.args = args
 
     def makeService(self, so):
         # delay this import as late as possible, to allow twistd's code to
         # accept --reactor= selection
         from .server import RelayServer
+
+        if self.args is not None:
+            so = self.args
+
         return RelayServer(
-            str(self.args.rendezvous),
-            str(self.args.transit),
-            self.args.advertise_version,
-            self.args.relay_database_path,
-            self.args.blur_usage,
-            signal_error=self.args.signal_error,
-            stats_file=self.args.stats_json_path,
-            allow_list=self.args.allow_list,
+            str(so.rendezvous),
+            str(so.transit),
+            so.advertise_version,
+            so.relay_database_path,
+            so.blur_usage,
+            signal_error=so.signal_error,
+            stats_file=so.stats_json_path,
+            allow_list=so.allow_list,
         )
+
+
 
 class MyTwistdConfig(twistd.ServerOptions):
     subCommands = [("XYZ", None, usage.Options, "node")]

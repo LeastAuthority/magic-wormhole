@@ -17,6 +17,7 @@ setup(name="magic-wormhole",
                 "wormhole.server",
                 "wormhole.test",
                 ],
+      py_modules=["twisted.plugins.wormhole_dropin"],
       package_data={"wormhole.server": ["db-schemas/*.sql"]},
       entry_points={
           "console_scripts":
